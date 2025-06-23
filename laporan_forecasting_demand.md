@@ -39,6 +39,22 @@ Dataset yang digunakan dalam proyek ini adalah data toko `S001` dan semua jenis 
 
 Dataset berasal dari `Kaggle`, yang bisa diakses pada link berikut. [Retail Inventory Demand Forecasting](https://www.kaggle.com/code/devraai/retail-inventory-demand-forecasting).
 
+### Ukuran Dataset
+Dataset awal memiliki:
+- Jumlah baris (Observasi): 76.000 .
+- Jumlah kolom (Fitur): 16 . 
+
+### Kondisi Data Awal
+
+* **Missing Value**<br>
+  Dari pemeriksaan menggunakan `df.isnull().sum()`, **tidak ditemukan nilai kosong (missing values)** di semua kolom.
+
+* **Data Duplikat**<br>
+  Setelah pengecekan `df.duplicated().sum()`, **tidak ditemukan baris duplikat** dalam dataset utama.
+
+* **Outlier**<br>
+  Visualisasi awal dengan **boxplot** pada kolom numerik (`Inventory Level`,`Units Sold`, `Units Ordered`) menunjukkan adanya **beberapa outlier**, terutama pada produk dengan volume penjualan tinggi. Namun, karena nilai-nilai ini masih masuk akal dalam konteks ritel (misalnya saat promo/peak season), outlier **tidak dihapus** agar model tetap dapat mempelajari pola sesungguhnya.
+
 Berikut adalah deskripsi variabel dalam dataset:
 
 ### Variabel-variabel pada Dataset Retail Inventory Demand Forecasting:
@@ -87,32 +103,18 @@ Beberapa langkah eksplorasi data dilakukan untuk memahami karakteristik dataset:
 
 Tahapan data preparation dilakukan secara berurutan untuk memastikan data siap digunakan dalam pelatihan model Machine Learning. Berikut adalah langkah-langkah yang dilakukan:
 
-1. **Konversi Tanggal**
-   Kolom `date` dikonversi ke format datetime agar dapat digunakan untuk ekstraksi fitur waktu dan manipulasi indeks.
-
-2. **Sortir Data**
-   Data diurutkan berdasarkan tanggal agar konsisten secara kronologis sebelum dilakukan proses pembuatan fitur lag.
-
-3. **Pembuatan Fitur Lag**
-   Dibuat fitur-fitur lag seperti `lag_1`, `lag_2`, `lag_3`, dst. Tujuannya adalah agar model dapat belajar dari permintaan sebelumnya, sesuai dengan sifat data time series.
-
-4. **Ekstraksi Fitur Kalender**
-   Ditambahkan fitur-fitur berdasarkan waktu, seperti:
-
-   * `Year` (tahun),
-   * `Month` (bulan),
-   * `Day` (tanggal dalam bulan).
-
-   Fitur-fitur ini membantu model memahami pola musiman dan siklus mingguan.
-
-5. **Handling Missing Values**
-   Setelah penambahan fitur lag, akan muncul missing values pada awal data. Baris-baris ini dihapus karena tidak bisa digunakan dalam pelatihan model.
-
-6. **Splitting Dataset**
-   Dataset dibagi menjadi dua bagian:
-
-   * **Training Set (80%)**: Data hingga tanggal tertentu digunakan untuk melatih model.
-   * **Testing Set (20%)**: Data setelah tanggal tersebut digunakan untuk mengevaluasi model.
+| No | Langkah                                  | Penjelasan & Alasan                                                                                                                                                                                |
+| -- | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1  | **Konversi `Date` ke Datetime & Sortir** | Kolom `date` dikonversi ke format `datetime64[ns]` agar dapat digunakan untuk ekstraksi fitur waktu dan manipulasi indeks.                                                                       |
+| 2  | **Filtering Store**                      | Memilih hanya baris dengan `Store ID = 'S001'` untuk fokus pada satu outlet. Hal ini menyederhanakan analisis dan komputasi. |
+| 3  | **Subsetting per Kategori**              | Dataset di‐loop menjadi 5 subset terpisah (`Electronics`, `Clothing`, `Groceries`, `Toys`, `Furniture`). Tiap subset diproses & dilatih modelnya sendiri, sehingga pola spesifik kategori terjaga.                                                                    |
+| 4  | **Penghapusan Kolom Irrelevan**          | Kolom `Product ID`, `Store ID`, dan `Region` di‐drop karena tidak dibutuhkan setelah filtering (tidak informatif untuk model).                                                                                                  |
+| 5  | **One-Hot Encoding**                     | Fitur kategorikal masih tersisa: `Category`, `Weather Condition`, `Seasonality`. Semua di‐encode dengan **`pd.get_dummies(drop_first=True)`** agar model menangani variabel biner/indikator.       |
+| 6  | **Standarisasi Fitur Numerik**           | Dengan `StandardScaler` pada setiap subset. Skaler disimpan per-kategori—penting untuk menjaga konsistensi ketika inference/forecasting.                                                           |
+| 7  | **Pembuatan Lag Features**               | Menambahkan `lag_1`, `lag_2`, `lag_3` (nilai demand 1–3 hari sebelumnya). Lag membantu model menangkap autocorrelation pada deret waktu.                                                           |
+| 8  | **Ekstraksi Fitur Kalender**             | Ditambahkan `Day`, `Month`, `Year`—fitur kalender yang memberi sinyal musiman mingguan & tahunan.                                                                                     |
+| 9  | **Handling Missing Values**              | Baris awal yang mengandung NaN (akibat lag) dihapus. Alternatif imputasi tidak dipakai karena jumlahnya sedikit dan dapat mengganggu lag.                                                          |
+| 10 | **Train-Test Split (Time-Order)**        | Tiap subset dibagi 80 % train, 20 % test secara **chronological (shuffle = False)** agar data masa depan tidak bocor ke model.                                                                     |
 
 Alasan dari tiap tahapan ini adalah agar data dapat direpresentasikan secara optimal ke dalam bentuk fitur yang dapat dikenali oleh model prediktif, khususnya dalam memodelkan pola time series non-linier dan musiman.
 
@@ -125,7 +127,21 @@ XGBoost dipilih karena:
 | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
 | • Mampu menangkap hubungan non-linear <br>• Mendukung feature importance & interpretabilitas <br>• Scalable dan cepat berkat optimisasi gradient-boosting | • Lebih banyak hyper-parameter sehingga rentan overfitting <br>• Memerlukan tuning yang hati-hati agar generalisasi baik |
 
-### 1. Pipeline Pemodelan
+### Prinsip Kerja XGBoost (Gradient Boosting Tree)
+
+1. **Ensemble Learning** – Model akhir merupakan **penjumlahan sejumlah decision-tree** (weak learners).
+2. **Gradient Boosting** – Pohon ke-$m$ dibangun untuk **memperbaiki error** (residual) semua pohon sebelumnya.
+
+   * Setelah setiap iterasi, error diukur melalui fungsi loss $L$.
+   * **Gradien** $\displaystyle (∂L/∂ŷ)$ dan **Hessian** $\displaystyle (∂²L/∂ŷ²)$ dihitung; nilai-nilai ini memberi tahu arah & besaran perbaikan.
+3. **Regularized Objective** – XGBoost menambahkan penalti kompleksitas pohon (jumlah daun & nilai daun) sehingga meminimalkan overfitting dan memilih struktur pohon lebih sederhana.
+4. **Shrinkage & Column Sampling** – Tiap pohon dikalikan faktor **learning rate** $\displaystyle (<1)$ dan subset fitur/row di-sampling $\displaystyle ⟹$ mengurangi korelasi antar-pohon serta meningkatkan generalisasi.
+5. **Parallelization** – Pembentukan setiap pohon dioptimalkan secara paralel (histogram-based split) sehingga pelatihan jauh lebih cepat dibanding library boosting klasik (GBM, AdaBoost).
+6. **Handle Missing** – XGBoost secara eksplisit mencari arah cabang default untuk nilai hilang pada tiap split, menjadikannya robust pada data retail yang sering missing.
+
+> Intinya: XGBoost menerapkan **iterative additive modeling**—setiap pohon baru fokus pada sisa error terdahulu, sambil mengontrol kompleksitas melalui regularisasi dan hyper-parameter yang dituning.
+
+### Pipeline Pemodelan
 
 | Langkah                   | Penjelasan ringkas                                                                                                                                                                                                       |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -148,6 +164,11 @@ XGBoost dipilih karena:
 
 > **Why XGBoost (tuned) chosen as final model?**
 > Dibanding baseline, tuning menurunkan MAE & RMSE pada 4 dari 5 kategori dan meningkatkan R² test; model lain (RF, Linear) telah dicoba sebelumnya namun memiliki error lebih tinggi. Karena itu XGBoost-tuned dianggap paling layak untuk deployment.
+
+## Evaluation
+
+*(Tidak berubah, sudah lengkap di laporan sebelumnya)*
+
 
 ## Evaluation
 
