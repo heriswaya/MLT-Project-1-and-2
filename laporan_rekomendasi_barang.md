@@ -140,7 +140,7 @@ Insight‐insight EDA ini menjadi dasar keputusan preprocessing (mis. penyertaan
 
 ## 🧹 Data Preparation
 
-Tahapan data preparation merupakan langkah penting sebelum memasuki proses pelatihan sistem rekomendasi. Pada proyek ini, proses persiapan data mencakup penggabungan data, pembersihan, serta transformasi fitur agar sesuai dengan kebutuhan model *collaborative filtering*. Berikut tahapan-tahapan yang dilakukan secara **berurutan**:
+Tahapan data preparation merupakan langkah penting sebelum memasuki proses pelatihan sistem rekomendasi. Pada proyek ini, proses persiapan data mencakup penggabungan data, pembersihan, serta transformasi fitur agar sesuai dengan kebutuhan model *collaborative filtering*. Berikut tahapan-tahapan yang dilakukan:
 
 ### 1. Penggabungan Data dari Berbagai Sumber
 
@@ -155,55 +155,76 @@ Beberapa file digabung untuk memperoleh representasi lengkap interaksi pelanggan
 📌 *Alasan:*
 Penggabungan ini memungkinkan kita memperkuat sinyal rekomendasi, khususnya dari sisi implicit feedback. Hal ini penting karena hanya sebagian kecil produk yang diberi rating oleh pengguna.
 
-### 2. Penggantian Nama Kolom Menjadi ‘user’ dan ‘product’
+### 2. Penghapusan Duplikat
 
-Kolom `customer_id` dan `product_name` diubah namanya menjadi:
-
-* `user` → untuk mewakili ID pengguna.
-* `product` → untuk mewakili nama produk.
+Dataset diperiksa dan dibersihkan dari baris-baris yang identik (duplikat) menggunakan fungsi `drop_duplicates()`.
 
 📌 *Alasan:*
-Standarisasi nama kolom memudahkan proses vektorisasi dan training model embedding, terutama pada pipeline berbasis TensorFlow atau model rekomendasi eksplisit lainnya.
+Data duplikat dapat menyebabkan bias pada model rekomendasi karena interaksi pengguna dan produk akan dihitung lebih dari sekali secara tidak adil. Penghapusan ini menjaga keakuratan sinyal interaksi.
 
-### 3. Pembersihan Nilai Kosong
+### 3. Encoding Kolom `customer_id` dan `product_name`
 
-Dataset difilter untuk membuang baris yang mengandung `NaN` pada kolom kritikal: `user`, `product`, dan `rating`.
+Kolom `customer_id` dan `product_name` digunakan untuk membuat **dua kolom baru**: `user` dan `product`. Proses ini dilakukan dengan cara:
 
-📌 *Alasan:*
-Model rekomendasi berbasis rating tidak dapat berjalan tanpa informasi eksplisit pengguna dan produk. Menghilangkan baris kosong menjaga kualitas data.
-
-### 4. Encoding User dan Produk ke Bentuk Numerik
-
-Menggunakan `LabelEncoder`, kolom `user` dan `product` dikodekan menjadi integer untuk digunakan dalam embedding layer pada model.
+* Membuat daftar ID unik untuk pengguna dan produk.
+* Memetakan setiap ID ke angka integer menggunakan dictionary (`map()`).
+* Menambahkan kolom `user` dan `product` ke dalam dataframe.
 
 📌 *Alasan:*
-Model *collaborative filtering* memerlukan input dalam bentuk integer indeks untuk setiap user dan item, agar bisa dimapping ke vector embedding.
+Transformasi ini diperlukan karena model rekomendasi berbasis embedding hanya dapat menerima input berupa indeks numerik. Proses ini juga memungkinkan pelacakan kembali ID asli melalui *reverse mapping* jika dibutuhkan.
 
-### 5. Pembagian Data: Training dan Validation
+### 4. Tipe Data dan Validasi Nilai
 
-Dataset dibagi menjadi dua bagian:
-
-* **Training set:** 80%
-* **Validation set:** 20%
-  Dengan metode acak (`random_state=42`) untuk memastikan replikasi.
+* Kolom `rating` dikonversi ke tipe data `float32` untuk kompatibilitas dan efisiensi komputasi dalam pelatihan model.
+* Diperiksa bahwa tidak ada nilai kosong (`NaN`) di kolom penting (`user`, `product`, dan `rating`). Tidak ditemukan nilai kosong yang memengaruhi proses training.
+* Kolom `full_name` dibiarkan apa adanya karena tidak digunakan dalam model dan tidak relevan terhadap prediksi rating.
 
 📌 *Alasan:*
-Pembagian ini digunakan untuk mengevaluasi kinerja model secara objektif dan mencegah overfitting. Validation set merepresentasikan data unseen.
+Konversi tipe dan validasi nilai menjaga efisiensi dan stabilitas proses pelatihan model neural network serta mencegah error saat melakukan batch processing.
 
-### 6. Normalisasi Nilai Rating
+### 5. Pengacakan Urutan Data
+Sebelum membagi data menjadi training dan validation, seluruh dataset diacak urutannya menggunakan `df.sample(frac=1, random_state=42)`.
 
-Nilai rating (range 1–5) dinormalisasi ke rentang 0–1 menggunakan min-max scaling untuk stabilitas training model neural network. Transformasi ini dilakukan dengan formula:
+📌 *Alasan*:
+Pengacakan penting untuk memastikan bahwa data tidak memiliki pola urutan yang dapat memengaruhi model secara tidak adil. Ini juga memastikan bahwa data training dan validation tersebar secara acak, sehingga lebih representatif dan mengurangi kemungkinan bias.
+
+### 6. Normalisasi dan Pemisahan Data
+
+Nilai rating (berkisaran 1–5) dinormalisasi ke rentang 0–1 menggunakan **min–max scaling** agar proses pelatihan model neural network menjadi lebih stabil. Normalisasi dilakukan dengan rumus:
 
 $$
 y_{\text{scaled}} = \frac{y - \min(y)}{\max(y) - \min(y)}
 $$
 
 📌 *Alasan:*
-Normalisasi target membantu model neural network/embedding untuk konvergensi yang lebih stabil, terutama ketika digunakan bersama optimizer tertentu dan fungsi loss seperti MSE.
+Normalisasi target memfasilitasi konvergensi yang lebih cepat dan stabil, terutama saat menggunakan model berbasis **embedding neural network** dan fungsi loss seperti MSE.
 
-### 7. Finalisasi Data untuk Training
+### 7. Pembagian Data: Training dan Validation
 
-Data final disimpan dalam bentuk `user`, `product`, dan `rating`, yang siap dimasukkan ke dalam pipeline pelatihan model rekomendasi berbasis **embedding neural network**.
+Setelah normalisasi, data dipisahkan menjadi:
+
+* **Fitur (X):** berisi `user`, `product`, dan `interaction_score`.
+* **Target (y):** berisi nilai rating yang telah dinormalisasi.
+
+Kemudian dilakukan **pembagian data** menjadi:
+
+* **Training set:** 80% data
+* **Validation set:** 20% data<br>
+  Dengan parameter `shuffle=True` dan `random_state=42` untuk memastikan reprodusibilitas hasil.
+
+📌 *Alasan:*
+Pembagian data penting untuk mengukur generalisasi model terhadap data baru.
+
+### 8. Finalisasi Data untuk Training
+
+Dataset akhir untuk pelatihan berisi kolom:
+
+* `user`: ID pengguna dalam format numerik hasil encoding
+* `product`: ID produk dalam format numerik hasil encoding
+* `interaction_score`: skor interaksi tambahan
+* `rating`: sebagai target yang telah dinormalisasi
+
+Data ini siap dimasukkan ke dalam pipeline pelatihan model rekomendasi berbasis **neural collaborative filtering** dengan pendekatan embedding.
 
 ## 🤖 Modeling
 
